@@ -106,11 +106,12 @@ class UploadPackInputParser:
             self.parse_error = False
         except Exception:
             # if we get any error on parsing, we don't fail the rest
-            log.exception("while parsing input", bad_input=data.decode())
+            bad_input = data.decode(errors="replace")
+            log.exception("while parsing input", bad_input=bad_input)
             self.hash = str(uuid.uuid4())  # get random hash to avoid cashing
             self.parse_error = True
             self.as_dict = {
-                "input": data.decode(),
+                "input": bad_input,
                 "parse_error": True,
                 "hash": self.hash[:5],
             }

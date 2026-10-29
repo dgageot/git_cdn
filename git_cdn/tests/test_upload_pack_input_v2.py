@@ -354,3 +354,9 @@ def test_input_with_two_commands():
         "input": data.decode(),
         "hash": ANYSTRING,
     }
+
+
+def test_parse_binary_input_error():
+    parser = UploadPackInputParserV2(b"0011command=fetch0001\xff\xfe0000")
+    assert parser.parse_error
+    assert parser.as_dict["parse_error"]

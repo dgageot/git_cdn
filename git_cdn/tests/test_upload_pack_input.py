@@ -175,3 +175,9 @@ def test_parse_upload_pack_input_error():
 def test_parse_pkt_line_with_flush_before_header(i):
     parser = UploadPackInputParser(i)
     assert parser.parse_error is False
+
+
+def test_parse_binary_input_error():
+    parser = UploadPackInputParser(b"0032want \xff\xfe not utf8\n0000")
+    assert parser.parse_error
+    assert parser.as_dict["parse_error"]
