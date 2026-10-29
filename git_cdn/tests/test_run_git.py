@@ -5,7 +5,7 @@ import pytest
 
 from git_cdn.repo_cache import RepoCache
 
-# pylint: disable=no-member,unused-argument
+# pylint: disable=no-member,unused-argument,redefined-outer-name
 
 
 def run_git_fake(*args, **kwargs):

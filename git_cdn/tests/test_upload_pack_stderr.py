@@ -11,7 +11,7 @@ from git_cdn.tests.test_upload_pack import FakeStreamWriter
 from git_cdn.upload_pack import UploadPackHandler
 from git_cdn.upload_pack_input_parser import UploadPackInputParser
 
-# pylint: disable=unused-argument,protected-access
+# pylint: disable=unused-argument,protected-access,redefined-outer-name
 
 FAKE_UPLOAD_PACK = """#!/bin/sh
 # flood stderr beyond the pipe buffer, then answer like git

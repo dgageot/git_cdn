@@ -6,6 +6,8 @@ from git_cdn.app import make_app
 from git_cdn.git_cdn import get_protocol_version
 from git_cdn.git_cdn import hide_auth_on_headers
 
+# pylint: disable=unused-argument
+
 SECRET = "Basic c2VjcmV0OnBhc3N3b3Jk"
 
 

@@ -7,7 +7,7 @@ import pytest
 
 from git_cdn.auth_cache import AuthCache
 
-# pylint: disable=unused-argument
+# pylint: disable=unused-argument,redefined-outer-name
 
 AUTH = "Basic dTpw"
 REPO = "group/project.git"

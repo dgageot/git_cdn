@@ -9,7 +9,7 @@ from aiohttp import web
 
 from git_cdn.client_session import ClientSessionWithRetry
 
-# pylint: disable=redefined-outer-name
+# pylint: disable=redefined-outer-name,protected-access
 
 
 @pytest.fixture

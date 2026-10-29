@@ -8,7 +8,7 @@ from aiohttp.test_utils import make_mocked_request
 
 from git_cdn.app import make_app
 
-# pylint: disable=unused-argument
+# pylint: disable=unused-argument,no-member
 
 AUTH = "Basic dTpw"
 

@@ -130,6 +130,7 @@ class UploadPackInputParserV2:
             }
             self.parse_error = False
         except Exception:
+            # pylint: disable=duplicate-code
             # if we get any error on parsing, we don't fail the rest
             bad_input = input_data.decode(errors="replace")
             log.exception("while parsing input", bad_input=bad_input)
@@ -140,6 +141,7 @@ class UploadPackInputParserV2:
                 "parse_error": True,
                 "hash": self.hash[:5],
             }
+            # pylint: enable=duplicate-code
 
     def hash_update(self):
         # pylint: disable=duplicate-code
