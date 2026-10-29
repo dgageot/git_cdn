@@ -59,8 +59,12 @@ log = getLogger()
 helpers.netrc_from_env = lambda: None
 
 
+# upload-pack inputs are buffered in memory: haves/wants of big repos reach a few MB
+MAX_UPLOAD_PACK_INPUT = 64 * 1024 * 1024
+
+
 def make_app(upstream):
-    _app = web.Application()
+    _app = web.Application(client_max_size=MAX_UPLOAD_PACK_INPUT)
     GitCDN(upstream, _app, _app.router)
     return _app
 

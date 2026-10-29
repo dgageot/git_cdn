@@ -516,7 +516,8 @@ class GitCDN:
         @todo see how we can do fully local by caching the authentication results in a local db
         (redis/sqlite?)
         """
-        request_content = await request.content.read()
+        # request.read() enforces the app's client_max_size, request.content doesn't
+        request_content = await request.read()
         if protocol_version == 2:
             parsed_content = UploadPackInputParserV2(request_content)
             if parsed_content.command != b"fetch":
