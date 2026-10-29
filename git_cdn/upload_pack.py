@@ -80,6 +80,8 @@ class UploadPackHandler:
             stdin=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        # drain stderr while git runs: a full pipe would block it forever
+        stderr = asyncio.create_task(proc.stderr.read())
         try:
             if self.pcache:
                 await asyncio.gather(
@@ -106,7 +108,7 @@ class UploadPackHandler:
             timeout = 10 * 60 if self.pcache else GIT_PROCESS_WAIT_TIMEOUT
             await ensure_proc_terminated(proc, "git upload-pack", timeout)
             if proc.returncode != 0:
-                error_message = await proc.stderr.read()
+                error_message = await stderr
                 bind_contextvars(
                     upload_pack_status="error",
                     upload_pack_returncode=proc.returncode,
