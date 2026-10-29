@@ -93,6 +93,8 @@ def anotherrepocache(tmpdir, header_for_git):
     for repo, branch in repolist:
         reponame = os.path.basename(repo)[:-4]
         server_url = os.getenv("GITSERVER_UPSTREAM") or os.getenv("CI_SERVER_URL")
+        if not server_url:
+            pytest.skip("needs GITSERVER_UPSTREAM")
         server_url = server_url[:-1] if server_url.endswith("/") else server_url
         url = yarl.URL(server_url) / repo
         if "CREDS" in os.environ:
