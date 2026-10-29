@@ -1,7 +1,9 @@
 # Standard Library
 import asyncio
 import os
+import tempfile
 from concurrent.futures import CancelledError
+from functools import partial
 from time import time
 
 # Third Party Libraries
@@ -17,10 +19,13 @@ from git_cdn.packet_line import to_packet
 from git_cdn.repo_cache import RepoCache
 from git_cdn.util import GIT_PROCESS_WAIT_TIMEOUT
 from git_cdn.util import ensure_proc_terminated
+from git_cdn.util import get_subdir
+from git_cdn.util import read_chunk
 
 log = getLogger()
 
 cache_cleaner = PackCacheCleaner()
+CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 32 * 1024))
 
 
 async def write_input(proc, input_data):
@@ -36,6 +41,11 @@ async def write_input(proc, input_data):
         log.warning("Ignoring BrokenPipeError, while writing to stdin", pid=proc.pid)
     finally:
         proc.stdin.close()
+
+
+async def spool_output(spool, stdout):
+    while chunk := await stdout.read(CHUNK_SIZE):
+        spool.write(chunk)
 
 
 def input_to_ctx(dict_input):
@@ -70,7 +80,9 @@ class UploadPackHandler:
         self.pcache = None
         self.protocol_version = protocol_version
 
-    async def _do_upload_pack(self, data):
+    async def _do_upload_pack(self, data, sink):
+        """Run git-upload-pack, feeding its stdout to sink(stdout).
+        Returns git's stderr if it failed, None otherwise."""
         proc = await asyncio.create_subprocess_exec(
             "git-upload-pack",
             "--stateless-rpc",
@@ -83,18 +95,7 @@ class UploadPackHandler:
         # drain stderr while git runs: a full pipe would block it forever
         stderr = asyncio.create_task(proc.stderr.read())
         try:
-            if self.pcache:
-                await asyncio.gather(
-                    write_input(proc, data.input),
-                    asyncio.shield(
-                        self.pcache.cache_pack(proc.stdout.readexactly, self.writer)
-                    ),
-                )
-            else:
-                await asyncio.gather(
-                    write_input(proc, data.input),
-                    self._flush_to_writer(proc.stdout.read),
-                )
+            await asyncio.gather(write_input(proc, data.input), sink(proc.stdout))
         except (asyncio.CancelledError, CancelledError, ConnectionResetError) as e:
             bind_context_from_exp(e)
             log.warning("Client disconnected during upload-pack")
@@ -107,16 +108,32 @@ class UploadPackHandler:
             # or 2s if not caching, as the process is useless now
             timeout = 10 * 60 if self.pcache else GIT_PROCESS_WAIT_TIMEOUT
             await ensure_proc_terminated(proc, "git upload-pack", timeout)
-            if proc.returncode != 0:
-                error_message = await stderr
-                bind_contextvars(
-                    upload_pack_status="error",
-                    upload_pack_returncode=proc.returncode,
-                    reason=error_message,
-                )
-                await self._write_pack_error(error_message.decode())
-
             log.debug("Upload pack done", pid=proc.pid)
+        if proc.returncode == 0:
+            return None
+        error_message = await stderr
+        bind_contextvars(
+            upload_pack_status="error",
+            upload_pack_returncode=proc.returncode,
+            reason=error_message,
+        )
+        return error_message
+
+    def _to_cache(self, stdout):
+        return asyncio.shield(self.pcache.cache_pack(stdout.readexactly, self.writer))
+
+    async def _limited(self, coro):
+        """Run coro in one of the MAX_GIT_UPLOAD_PACK slots"""
+        if not self.sema:
+            return await coro
+        start_wait = time()
+        async with self.sema:
+            start = time()
+            bind_contextvars(sema_wait=start - start_wait)
+            try:
+                return await coro
+            finally:
+                bind_contextvars(upload_pack_duration=time() - start)
 
     async def _write_pack_error(self, error: str):
         log.error("Upload pack, sending error to client", pack_error=error)
@@ -124,7 +141,6 @@ class UploadPackHandler:
         await self.writer.write(pkt)
 
     async def _flush_to_writer(self, read_func):
-        CHUNK_SIZE = int(os.environ.get("CHUNK_SIZE", 32 * 1024))
         while True:
             chunk = await read_func(CHUNK_SIZE)
             if not chunk:
@@ -159,19 +175,19 @@ class UploadPackHandler:
             raise RuntimeError("Run with cache failed")
 
     async def _upload_pack(self, parsed_input):
-        async with self.rcache.read_lock():
-            if self.rcache.exists():
-                if not self.sema:
-                    await self._do_upload_pack(parsed_input)
-                else:
-                    start_wait = time()
-                    async with self.sema:
-                        start_upload_pack = time()
-                        bind_contextvars(sema_wait=start_upload_pack - start_wait)
-                        await self._do_upload_pack(parsed_input)
-                        bind_contextvars(
-                            upload_pack_duration=time() - start_upload_pack
-                        )
+        # git's output is spooled (to the pack cache, or to a temporary file) so
+        # that the slot and the repo lock are held while the pack is computed,
+        # not while a possibly slow client downloads it
+        with tempfile.TemporaryFile(dir=get_subdir("tmp")) as spool:
+            async with self.rcache.read_lock():
+                if not self.rcache.exists():
+                    return
+                sink = self._to_cache if self.pcache else partial(spool_output, spool)
+                error = await self._limited(self._do_upload_pack(parsed_input, sink))
+            spool.seek(0)
+            await self._flush_to_writer(partial(read_chunk, spool))
+            if error is not None:
+                await self._write_pack_error(error.decode())
 
     async def _ensure_input_wants_in_rcache(self, wants):
         """Checks if all 'wants' are in rcache
