@@ -3,7 +3,6 @@ import asyncio
 import base64
 import os
 import re
-import urllib
 from asyncio.subprocess import Process
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version
@@ -88,14 +87,22 @@ def backoff(start, count):
         yield start * 2**x
 
 
-def get_url_creds_from_auth(auth):
-    # decode the creds from the auth in
-    creds = base64.b64decode(auth.split(" ", 1)[-1]).decode()
-    # gitlab token not supposed to require quote, but we still encode.
-    # because some people put their email as user and this put an extraneous @ in the url.
-    # https://tools.ietf.org/html/rfc7617  -> BasicAuth  Page 4
-    # https://tools.ietf.org/html/rfc3986.html -> URLs:  3.2.1.  User Information
-    return ":".join([urllib.parse.quote_plus(p) for p in creds.split(":", 1)])
+def get_creds_from_auth(auth):
+    """'user:password' from a BasicAuth header value"""
+    return base64.b64decode(auth.split(" ", 1)[-1]).decode()
+
+
+def git_auth_env(creds):
+    """Hand the credentials to git through its config environment, never through
+    the URL: they must not show up in argv, ps or logs"""
+    token = base64.b64encode(creds.encode()).decode()
+    return {
+        **os.environ,
+        "GIT_TERMINAL_PROMPT": "0",
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "http.extraHeader",
+        "GIT_CONFIG_VALUE_0": f"Authorization: Basic {token}",
+    }
 
 
 def generate_url(base, path, auth=None):

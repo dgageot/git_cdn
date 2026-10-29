@@ -38,7 +38,7 @@ from git_cdn.upload_pack_input_parser_v2 import UploadPackInputParserV2
 from git_cdn.util import GITCDN_VERSION
 from git_cdn.util import GITLFS_OBJECT_RE
 from git_cdn.util import find_gitpath
-from git_cdn.util import get_url_creds_from_auth
+from git_cdn.util import get_creds_from_auth
 from git_cdn.util import object_module_name
 
 log = getLogger()
@@ -473,7 +473,7 @@ class GitCDN:
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
 
-        creds = get_url_creds_from_auth(request.headers["Authorization"])
+        creds = get_creds_from_auth(request.headers["Authorization"])
         rcache = RepoCache(repo, creds, self.upstream)
         stdout, stderr, returncode = await rcache.execute_git_command(
             [sha1.encode() for sha1 in required_sha1s], *git_args
@@ -543,7 +543,7 @@ class GitCDN:
                 )
 
             # read the upload-pack input from http response
-            creds = get_url_creds_from_auth(request.headers["Authorization"])
+            creds = get_creds_from_auth(request.headers["Authorization"])
 
             # start a streaming the response to the client
             response = web.StreamResponse(

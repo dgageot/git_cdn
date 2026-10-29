@@ -17,6 +17,7 @@ from git_cdn.util import ensure_proc_terminated
 from git_cdn.util import generate_url
 from git_cdn.util import get_bundle_paths
 from git_cdn.util import get_subdir
+from git_cdn.util import git_auth_env
 
 log = getLogger()
 BACKOFF_START = float(os.getenv("BACKOFF_START", "0.5"))
@@ -24,10 +25,11 @@ BACKOFF_COUNT = int(os.getenv("BACKOFF_COUNT", "5"))
 PROGRESS_OPTION = os.getenv("GIT_PROGRESS_OPTION", "--progress")
 
 
-async def exec_git(*args):
+async def exec_git(*args, env=None):
     return await asyncio.create_subprocess_exec(
         "git",
         *args,
+        env=env,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
@@ -37,9 +39,9 @@ class RepoCache:
     def __init__(self, path, auth, upstream):
         git_cache_dir = get_subdir("git")
         self.directory = os.path.join(git_cache_dir, path).encode()
-        self.auth = auth
         self.lock = self.directory + b".lock"
-        self.url = generate_url(upstream, path, auth)
+        self.url = generate_url(upstream, path)
+        self.env = git_auth_env(auth)
         self.path = path
 
     def exists(self):
@@ -68,7 +70,7 @@ class RepoCache:
         log.debug("git_cmd start", cmd=args)
         stdout_data = b""
         stderr_data = b""
-        git_proc = await exec_git(*args)
+        git_proc = await exec_git(*args, env=self.env)
         try:
             stdout_data, stderr_data = await git_proc.communicate()
         except (
@@ -82,13 +84,6 @@ class RepoCache:
             raise
         finally:
             await ensure_proc_terminated(git_proc, str(args))
-            # prevent logging of the creds
-            stdout_data = stdout_data.replace(
-                self.auth.encode(), self.auth.encode()[:2] + b"<XX>"
-            )
-            stderr_data = stderr_data.replace(
-                self.auth.encode(), self.auth.encode()[:2] + b"<XX>"
-            )
             if b"HTTP Basic: Access denied" in stderr_data:
                 raise HTTPUnauthorized(reason=stderr_data)
 
