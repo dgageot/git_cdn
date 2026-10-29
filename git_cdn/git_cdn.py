@@ -94,22 +94,9 @@ def require_auth(request):
         raise HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="Git Proxy"'})
 
 
-# get git protocol version from headers (must be case-insensitive!)
-def get_protocol_version(h: dict) -> int:
-    git_protocol = None
-    protocol_version = 1
-
-    for key in h.keys():
-        if key.lower() == "git-protocol":
-            git_protocol = h.get(key)
-            break
-
-    if git_protocol is not None:
-        version = PROTOCOL_VERSION_RE.match(git_protocol)
-        if version is not None:
-            protocol_version = int(version.group(1))
-
-    return protocol_version
+def get_protocol_version(headers) -> int:
+    version = PROTOCOL_VERSION_RE.match(headers.get("Git-Protocol", ""))
+    return int(version.group(1)) if version else 1
 
 
 def redirect_browsers(request, upstream):
@@ -136,11 +123,11 @@ def extract_headers_to_context(h):
     bind_contextvars(**a)
 
 
-def hide_auth_on_headers(h):
-    if "Authorization" in h:
-        h["Authorization"] = (
-            h["Authorization"][0:10] + "XXX" + h["Authorization"][-3:-1]
-        )
+def hide_auth_on_headers(headers):
+    """headers must be case-insensitive, clients may send 'authorization'"""
+    auth = headers.get("Authorization")
+    if auth:
+        headers["Authorization"] = auth[0:10] + "XXX" + auth[-3:-1]
 
 
 # repo paths are segments of [word . -] chars that never start with a dot
@@ -325,14 +312,14 @@ class GitCDN:
         )
 
         extract_headers_to_context(request.headers)
-        h = dict(request.headers)
+        h = request.headers.copy()
         hide_auth_on_headers(h)
         log.debug(
             "handling response",
             request_path=request.path,
             path=path,
             git_path=git_path,
-            request_headers_dict=h,
+            request_headers_dict=dict(h),
             parallel_request=parallel_request,
         )
         # For the case of clone bundle, we don't enforce authentication, and browser redirection
