@@ -9,9 +9,8 @@ from concurrent.futures import CancelledError
 from multiprocessing import cpu_count
 from typing import Union
 
-import newrelic.agent
-
 import aiohttp
+import newrelic.agent
 from aiohttp import ClientSession
 from aiohttp import TCPConnector
 from aiohttp import web
@@ -23,6 +22,7 @@ from structlog import getLogger
 from structlog.contextvars import bind_contextvars
 from structlog.contextvars import clear_contextvars
 
+from git_cdn.auth_cache import AuthCache
 from git_cdn.client_session import ClientSessionWithRetry
 from git_cdn.clone_bundle_manager import CloneBundleManager
 from git_cdn.clone_bundle_manager import close_bundle_session
@@ -30,7 +30,6 @@ from git_cdn.lfs_cache_manager import LFSCacheManager
 from git_cdn.log import bind_context_from_exp
 from git_cdn.log import enable_console_logs
 from git_cdn.log import enable_udp_logs
-from git_cdn.auth_cache import AuthCache
 from git_cdn.repo_cache import RepoCache
 from git_cdn.upload_pack import UploadPackHandler
 from git_cdn.upload_pack_input_parser import UploadPackInputParser
@@ -294,7 +293,9 @@ class GitCDN:
         )
         # For the case of clone bundle, we don't enforce authentication, and browser redirection
         if method == "get" and path.endswith("/clone.bundle"):
-            newrelic.agent.set_transaction_name("clone.bundle " + git_path, group=None, priority=None)
+            newrelic.agent.set_transaction_name(
+                "clone.bundle " + git_path, group=None, priority=None
+            )
             bind_contextvars(handler="clone-bundle")
             if not git_path:
                 raise HTTPBadRequest(reason="bad path: " + path)
@@ -309,13 +310,17 @@ class GitCDN:
         bind_contextvars(git_protocol_version=protocol_version)
 
         if method == "post" and path.endswith("git-upload-pack"):
-            newrelic.agent.set_transaction_name("git-upload-pack " + git_path, group=None, priority=None)
+            newrelic.agent.set_transaction_name(
+                "git-upload-pack " + git_path, group=None, priority=None
+            )
             bind_contextvars(handler="upload-pack")
             if not git_path:
                 raise HTTPBadRequest(reason="bad path: " + path)
             return await self.handle_upload_pack(request, git_path, protocol_version)
         if method in ("post", "put") and path.endswith("git-receive-pack"):
-            newrelic.agent.set_transaction_name("git-receive-pack" + git_path, group=None, priority=None)
+            newrelic.agent.set_transaction_name(
+                "git-receive-pack" + git_path, group=None, priority=None
+            )
             bind_contextvars(handler="redirect")
             return await self.proxify(request)
 
@@ -323,7 +328,9 @@ class GitCDN:
         # arguing it is impossible to guess a valid 64 byte oid without having access
         # to the git repo already
         if method == "get" and GITLFS_OBJECT_RE.match(path):
-            newrelic.agent.set_transaction_name("get-lfs " + git_path, group=None, priority=None)
+            newrelic.agent.set_transaction_name(
+                "get-lfs " + git_path, group=None, priority=None
+            )
             bind_contextvars(handler="lfs")
             self.lfs_manager.set_base_url(str(request.url.origin()) + "/")
             h = request.headers.copy()
@@ -333,7 +340,9 @@ class GitCDN:
                 self.app.served_lfs_objects += 1
             return resp
 
-        newrelic.agent.set_transaction_name("proxify " + git_path, group=None, priority=None)
+        newrelic.agent.set_transaction_name(
+            "proxify " + git_path, group=None, priority=None
+        )
         bind_contextvars(handler="redirect")
         return await self.proxify(request)
 
@@ -417,7 +426,11 @@ class GitCDN:
         return web.Response(text="live")
 
     async def handle_api_last_active_branches(self, request):
-        newrelic.agent.set_transaction_name("api.last_active_branches " + request.query["repo"], group=None, priority=None)
+        newrelic.agent.set_transaction_name(
+            "api.last_active_branches " + request.query["repo"],
+            group=None,
+            priority=None,
+        )
         auth_response = await self.auth_request(request, request.query["repo"])
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
@@ -439,7 +452,9 @@ class GitCDN:
         return web.Response(body=cmd_stdout)
 
     async def handle_api_merge_base(self, request):
-        newrelic.agent.set_transaction_name("api.merge_base " + request.query["repo"], group=None, priority=None)
+        newrelic.agent.set_transaction_name(
+            "api.merge_base " + request.query["repo"], group=None, priority=None
+        )
         auth_response = await self.auth_request(request, request.query["repo"])
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
@@ -447,15 +462,17 @@ class GitCDN:
         creds = get_url_creds_from_auth(auth)
         rcache = RepoCache(request.query["repo"], creds, self.upstream)
         cmd_stdout = await rcache.execute_git_command(
-            [request.query['current_sha1'].encode('ascii')],
+            [request.query["current_sha1"].encode("ascii")],
             "merge-base",
             f"refs/remotes/origin/heads/{request.query['base']}",
-            request.query['current_sha1'],
+            request.query["current_sha1"],
         )
         return web.Response(body=cmd_stdout)
 
     async def handle_api_diff(self, request):
-        newrelic.agent.set_transaction_name("api.diff " + request.query["repo"], group=None, priority=None)
+        newrelic.agent.set_transaction_name(
+            "api.diff " + request.query["repo"], group=None, priority=None
+        )
         auth_response = await self.auth_request(request, request.query["repo"])
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
@@ -464,8 +481,8 @@ class GitCDN:
         rcache = RepoCache(request.query["repo"], creds, self.upstream)
         cmd_stdout = await rcache.execute_git_command(
             [
-                request.query['base_sha1'].encode('ascii'),
-                request.query['current_sha1'].encode('ascii')
+                request.query["base_sha1"].encode("ascii"),
+                request.query["current_sha1"].encode("ascii"),
             ],
             "diff",
             "--text",
@@ -474,7 +491,9 @@ class GitCDN:
         return web.Response(body=cmd_stdout)
 
     async def handle_api_diff_no_renames(self, request):
-        newrelic.agent.set_transaction_name("api.diff_no_renames " + request.query["repo"], group=None, priority=None)
+        newrelic.agent.set_transaction_name(
+            "api.diff_no_renames " + request.query["repo"], group=None, priority=None
+        )
         auth_response = await self.auth_request(request, request.query["repo"])
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
@@ -483,8 +502,8 @@ class GitCDN:
         rcache = RepoCache(request.query["repo"], creds, self.upstream)
         cmd_stdout = await rcache.execute_git_command(
             [
-                request.query['base_sha1'].encode('ascii'),
-                request.query['current_sha1'].encode('ascii')
+                request.query["base_sha1"].encode("ascii"),
+                request.query["current_sha1"].encode("ascii"),
             ],
             "diff",
             "--text",
@@ -531,9 +550,11 @@ class GitCDN:
             if parsed_content.command != b"fetch":
                 bind_contextvars(
                     upload_pack_status="direct",
-                    command=parsed_content.command.decode()
-                    if parsed_content.command is not None
-                    else None,
+                    command=(
+                        parsed_content.command.decode()
+                        if parsed_content.command is not None
+                        else None
+                    ),
                 )
                 return await self.proxify_with_data(request, request_content)
             bind_contextvars(command="fetch")
@@ -545,7 +566,9 @@ class GitCDN:
         try:
             auth_response = await self.auth_request(request, path)
             if auth_response is not None:
-                return web.Response(text=auth_response.reason, status=auth_response.status)
+                return web.Response(
+                    text=auth_response.reason, status=auth_response.status
+                )
 
             # read the upload-pack input from http response
             creds = get_url_creds_from_auth(request.headers["Authorization"])

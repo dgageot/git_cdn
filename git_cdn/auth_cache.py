@@ -1,16 +1,19 @@
-import os
-import time
-import pathlib
 import hashlib
+import os
+import pathlib
+import time
+
 from structlog import getLogger
+
 from git_cdn.util import WORKDIR
 
 log = getLogger()
 
+
 class AuthCache:
     def __init__(self):
         self.cache_ttl = int(os.getenv("AUTH_CACHE_TTL", 0))
-        self.directory = os.path.join(WORKDIR, 'auth_cache')
+        self.directory = os.path.join(WORKDIR, "auth_cache")
         pathlib.Path(self.directory).mkdir(parents=True, exist_ok=True)
 
     def auth_ok(self, auth_header, path):
@@ -37,9 +40,12 @@ class AuthCache:
         if not auth_header or auth_header == "":
             return False
         filename = self.cache_file(auth_header, path)
-        with open(filename, 'wb') as f:
+        with open(filename, "wb") as f:
             f.write(b"")
         log.info(f"Auth cache created: {filename}")
 
     def cache_file(self, auth_header, path):
-        return os.path.join(self.directory, hashlib.md5(f"{auth_header} {path}".encode('utf-8')).hexdigest())
+        return os.path.join(
+            self.directory,
+            hashlib.md5(f"{auth_header} {path}".encode("utf-8")).hexdigest(),
+        )

@@ -5,7 +5,6 @@ import time
 from concurrent.futures import CancelledError
 
 import newrelic.agent
-
 from aiohttp.web_exceptions import HTTPInternalServerError
 from aiohttp.web_exceptions import HTTPUnauthorized
 from structlog import getLogger
