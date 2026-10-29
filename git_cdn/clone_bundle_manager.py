@@ -14,6 +14,7 @@ from structlog import getLogger
 
 from git_cdn.lock.aio_lock import lock
 from git_cdn.util import get_bundle_paths
+from git_cdn.util import read_chunk
 
 log = getLogger()
 
@@ -90,7 +91,7 @@ class CloneBundleManager:
         h = hashlib.md5()
         while True:
             if inf:
-                chunk = inf.read(self.CHUNK_SIZE)
+                chunk = await read_chunk(inf, self.CHUNK_SIZE)
             else:
                 chunk = await request.content.readany()
             if not chunk:

@@ -142,12 +142,10 @@ class LFSCacheFile:
     def response(self):
         if "gzip" in self.accept_encoding and self.gzip_in_cache():
             bind_contextvars(lfs_served="gzip")
-            return web.Response(
-                body=open(self.gzip, "rb"), headers={"Content-Encoding": "gzip"}
-            )
+            return web.FileResponse(self.gzip, headers={"Content-Encoding": "gzip"})
         if self.raw_in_cache():
             bind_contextvars(lfs_served="raw")
-            return web.Response(body=open(self.filename, "rb"))
+            return web.FileResponse(self.filename)
         return None
 
     async def download(self, session, ctx):

@@ -17,6 +17,11 @@ from git_cdn.lfs_cache_manager import LFSCacheManager
 # pylint: disable=unused-argument,protected-access,redefined-outer-name,broad-exception-raised
 
 
+def read_file(resp):
+    with open(resp._path) as f:
+        return f.read()
+
+
 @pytest_asyncio.fixture
 def cache_manager(tmpworkdir):
     assert not tmpworkdir.listdir()
@@ -164,7 +169,7 @@ async def test_download_cache_miss(
     client = await aiohttp_client(app)
     cache_manager.session = client
     resp = await cache_manager.get_from_cache(path, {})
-    assert resp.body._value.read().decode() == TEXT
+    assert read_file(resp) == TEXT
 
 
 @pytest.mark.asyncio
@@ -193,7 +198,7 @@ async def test_download_cache_hit(
 
     resp = await cache_manager.get_from_cache(path, {})
 
-    assert resp.body._value.read().decode() == TEXT
+    assert read_file(resp) == TEXT
 
 
 @pytest.mark.asyncio

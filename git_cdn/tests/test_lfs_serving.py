@@ -1,4 +1,5 @@
 # Standard Library
+import gzip
 import os
 from types import SimpleNamespace
 
@@ -44,3 +45,15 @@ async def test_cached_object_served_once_authenticated(client, mocker):
     resp = await client.get(PATH, headers=HEADERS)
     assert resp.status == 200
     assert await resp.read() == b"CACHED"
+
+
+@pytest.mark.asyncio
+async def test_cached_gzip_object_served(client, mocker):
+    mocker.patch.object(client.app.gitcdn, "auth_request", return_value=None)
+    cache_file = LFSCacheFile(f"http://x{PATH}", {})
+    with open(cache_file.gzip, "wb") as f:
+        f.write(gzip.compress(b"CACHED-GZIP"))
+    resp = await client.get(PATH, headers={**HEADERS, "Accept-Encoding": "gzip"})
+    assert resp.status == 200
+    assert resp.headers["Content-Encoding"] == "gzip"
+    assert await resp.read() == b"CACHED-GZIP"

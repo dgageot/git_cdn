@@ -104,3 +104,16 @@ async def test_pack_cache_error(tmpworkdir, cdn_event_loop):
 
     assert fakewrite.output == get_data("upload_pack_error.bin")
     assert not pc.exists()
+
+
+@pytest.mark.asyncio
+async def test_send_pack_reads_off_the_event_loop(tmpworkdir, cdn_event_loop, mocker):
+    cache = PackCache("ff" * 32)
+    with open(cache.filename, "wb") as f:
+        f.write(b"0008NAK\n0000")
+    loop = asyncio.get_running_loop()
+    executor = mocker.spy(loop, "run_in_executor")
+    writer = FakeStreamWriter()
+    await cache.send_pack(writer)
+    assert writer.output == b"0008NAK\n0000"
+    assert executor.call_count >= 1

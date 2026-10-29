@@ -168,6 +168,11 @@ async def ensure_proc_terminated(
     log.error("Process didn't exit after kill", cmd=cmd, pid=proc.pid, timeout=timeout)
 
 
+async def read_chunk(f, size):
+    """read() in a thread: a cold cache file read would block the event loop"""
+    return await asyncio.get_running_loop().run_in_executor(None, f.read, size)
+
+
 def object_module_name(o):
     fn = ""
     if hasattr(o, "__module__"):

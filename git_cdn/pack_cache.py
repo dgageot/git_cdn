@@ -17,6 +17,7 @@ from git_cdn.lock.aio_lock import lock
 from git_cdn.lock.file_lock import FileLock
 from git_cdn.packet_line import PacketLineChunkParser
 from git_cdn.util import get_subdir
+from git_cdn.util import read_chunk
 
 log = getLogger()
 executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -73,7 +74,7 @@ class PackCache:
             count = 0
             try:
                 while True:
-                    data = f.read(CHUNK_SIZE)
+                    data = await read_chunk(f, CHUNK_SIZE)
                     count += len(data)
 
                     bind_contextvars(
