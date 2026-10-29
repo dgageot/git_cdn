@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 
@@ -43,3 +44,28 @@ async def test_cancel_run(mocker):
     assert task.done()
     assert task.cancelled()
     assert spycom.call_count == 2
+
+
+@pytest.fixture
+def repo_dir(tmpworkdir):
+    rcache = RepoCache("project.git", "u:p", "http://upstream/")
+    os.makedirs(rcache.directory)
+    os.utime(rcache.directory, (0, 0))
+    return rcache
+
+
+@pytest.mark.asyncio
+async def test_fetch_success_updates_mtime(repo_dir, mocker):
+    mocker.patch.object(repo_dir, "run_git", return_value=(b"", b"", 0))
+    await repo_dir.fetch()
+    assert repo_dir.mtime() > 0
+    repo_dir.run_git.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_failure_keeps_mtime(repo_dir, mocker):
+    mocker.patch.object(repo_dir, "run_git", return_value=(b"", b"error", 128))
+    mocker.patch("git_cdn.repo_cache.asyncio.sleep")
+    await repo_dir.fetch()
+    assert repo_dir.mtime() == 0
+    assert repo_dir.run_git.call_count == 5

@@ -119,10 +119,12 @@ class RepoCache:
                 "^refs/pull/*",
             )
             if returncode == 0:
-                break
+                # the mtime tells concurrent requests the copy is up to date
+                self.utime()
+                return
             log.warning("fetch failed, trying again", timeout=timeout)
             await asyncio.sleep(timeout)
-        self.utime()
+        log.error("fetch failed, giving up")
 
     async def clone(self):
         _, bundle_lock, bundle_file = get_bundle_paths(self.path)
