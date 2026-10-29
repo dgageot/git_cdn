@@ -354,14 +354,18 @@ class GitCDN:
             bind_contextvars(handler="redirect")
             return await self.proxify(request)
 
-        # we skip the authentication step in order to avoid one round trip
-        # arguing it is impossible to guess a valid 64 byte oid without having access
-        # to the git repo already
         if method == "get" and GITLFS_OBJECT_RE.match(path):
             newrelic.agent.set_transaction_name(
                 "get-lfs " + git_path, group=None, priority=None
             )
             bind_contextvars(handler="lfs")
+            # cached objects are served locally: check the creds on upstream like
+            # upload-pack does (AUTH_CACHE_TTL makes it a single round trip)
+            auth_response = await self.auth_request(request, git_path)
+            if auth_response is not None:
+                return web.Response(
+                    text=auth_response.reason, status=auth_response.status
+                )
             self.lfs_manager.set_base_url(str(request.url.origin()) + "/")
             h = request.headers.copy()
             del h["Host"]
