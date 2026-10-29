@@ -513,7 +513,8 @@ class GitCDN:
             headers=headers,
             allow_redirects=False,
         ) as response:
-            await response.content.read()
+            # only the status matters, don't download the (possibly huge) ref
+            # advertisement: the connection is closed on exit anyway
             if response.status == 200:
                 self.auth_cache.store_auth_ok(auth, path)
                 return None
