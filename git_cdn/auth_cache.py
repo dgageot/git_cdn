@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import os
 import pathlib
@@ -5,47 +6,42 @@ import time
 
 from structlog import getLogger
 
-from git_cdn.util import WORKDIR
+from git_cdn.util import get_subdir
 
 log = getLogger()
 
 
 class AuthCache:
+    """Remember for AUTH_CACHE_TTL seconds that upstream accepted creds for a repo.
+    Disabled when the TTL is 0. Entries are files shared by all workers."""
+
     def __init__(self):
-        self.cache_ttl = int(os.getenv("AUTH_CACHE_TTL", 0))
-        self.directory = os.path.join(WORKDIR, "auth_cache")
-        pathlib.Path(self.directory).mkdir(parents=True, exist_ok=True)
+        self.ttl = int(os.getenv("AUTH_CACHE_TTL", "0"))
 
     def auth_ok(self, auth_header, path):
-        if self.cache_ttl <= 0:
-            return False
-        if not auth_header or auth_header == "":
+        if self.ttl <= 0 or not auth_header:
             return False
         filename = self.cache_file(auth_header, path)
         try:
-            stats = os.stat(filename)
-            now = time.time()
-            if (now - stats.st_mtime) > self.cache_ttl:
-                log.info(f"Auth cache expired: {filename}")
-                os.unlink(filename)
-                return False
-            log.info(f"Auth cache ok: {filename}")
-            return True
+            age = time.time() - os.stat(filename).st_mtime
         except FileNotFoundError:
             return False
+        if age > self.ttl:
+            log.info("Auth cache expired", filename=filename)
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(filename)
+            return False
+        log.info("Auth cache ok", filename=filename)
+        return True
 
     def store_auth_ok(self, auth_header, path):
-        if self.cache_ttl <= 0:
-            return False
-        if not auth_header or auth_header == "":
-            return False
+        if self.ttl <= 0 or not auth_header:
+            return
         filename = self.cache_file(auth_header, path)
-        with open(filename, "wb") as f:
-            f.write(b"")
-        log.info(f"Auth cache created: {filename}")
+        pathlib.Path(filename).touch()
+        log.info("Auth cache created", filename=filename)
 
-    def cache_file(self, auth_header, path):
-        return os.path.join(
-            self.directory,
-            hashlib.md5(f"{auth_header} {path}".encode("utf-8")).hexdigest(),
-        )
+    @staticmethod
+    def cache_file(auth_header, path):
+        key = hashlib.sha256(f"{auth_header} {path}".encode()).hexdigest()
+        return os.path.join(get_subdir("auth_cache"), key)
