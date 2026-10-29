@@ -425,14 +425,17 @@ class GitCDN:
         auth = request.headers["Authorization"]
         creds = get_url_creds_from_auth(auth)
         rcache = RepoCache(request.query["repo"], creds, self.upstream)
-        p = await asyncio.create_subprocess_exec(
-            "sh",
-            "-c",
-            f"git --git-dir ${rcache.directory} for-each-ref --sort=-committerdate refs/remotes/origin/heads | head -n 10",
-            stderr=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
+        # argv only, never a shell: "repo" is user controlled
+        cmd_stdout, cmd_stderr, returncode = await rcache.run_git(
+            "--git-dir",
+            rcache.directory,
+            "for-each-ref",
+            "--sort=-committerdate",
+            "--count=10",
+            "refs/remotes/origin/heads",
         )
-        cmd_stdout, cmd_stderr = await p.communicate()
+        if returncode != 0:
+            return web.Response(text=cmd_stderr.decode(errors="replace"), status=500)
         return web.Response(body=cmd_stdout)
 
     async def handle_api_merge_base(self, request):
