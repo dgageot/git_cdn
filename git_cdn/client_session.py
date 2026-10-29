@@ -16,6 +16,8 @@ class ClientSessionWithRetry:
     is consumed by the first attempt."""
 
     REQUEST_MAX_RETRIES = int(os.getenv("REQUEST_MAX_RETRIES", "10"))
+    # exponential backoff, but capped: 10 retries must not mean a minute of waiting
+    MAX_BACKOFF = 2.0
 
     def __init__(self, get_session, retry_on, method, url, *args, **kwargs):
         self.status_retry_on = retry_on
@@ -74,7 +76,7 @@ class ClientSessionWithRetry:
                     request_url=self.url,
                     request_method=self.method,
                 )
-            await asyncio.sleep(timeout)
+            await asyncio.sleep(min(timeout, self.MAX_BACKOFF))
         return self.cm_request
 
     async def __aexit__(self, *args, **kwargs):

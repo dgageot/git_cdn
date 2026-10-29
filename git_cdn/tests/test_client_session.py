@@ -95,3 +95,25 @@ async def test_connection_released_while_waiting(aiohttp_server, mocker):
         assert not session.connector._acquired
         assert await asyncio.wait_for(task, 2) == 200
     hang.set()
+
+
+@pytest.mark.asyncio
+async def test_retry_budget_is_bounded(aiohttp_server, mocker):
+    async def always_500(request):
+        return web.Response(status=500)
+
+    app = web.Application()
+    app.router.add_route("*", "/", always_500)
+    server = await aiohttp_server(app)
+    sleep = mocker.patch("git_cdn.client_session.asyncio.sleep")
+
+    async with ClientSession() as session:
+        retry = ClientSessionWithRetry(
+            lambda: session, range(500, 600), "get", server.make_url("/")
+        )
+        retry.REQUEST_MAX_RETRIES = 10
+        async with retry as response:
+            assert response.status == 500
+
+    assert sleep.call_count == 9
+    assert sum(call.args[0] for call in sleep.call_args_list) < 12
