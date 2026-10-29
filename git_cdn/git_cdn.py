@@ -77,7 +77,7 @@ def check_auth(request):
     """This method provides a quick way to redirect to correct path and force
     git to authenticate"""
     spl = request.path_qs.split("/")
-    if "info" in spl:
+    if "info" in spl[1:-1]:
         # early redirect paths not ending with git (we avoid a few round trip to the far server)
         i = spl.index("info")
         if not spl[i - 1].endswith(".git") and spl[i + 1].split("?")[0] in (
