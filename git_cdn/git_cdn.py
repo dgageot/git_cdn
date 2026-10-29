@@ -211,7 +211,6 @@ class GitCDN:
         self.router.add_resource("/{path:.+}").add_route("*", self.routing_handler)
         self.proxysession = None
         self.lfs_manager = None
-        self.start_time = None
         self.sema = asyncio.BoundedSemaphore(value=GitCDN.MAX_SEMAPHORE)
         # for tests
         self.app.served_lfs_objects = 0
@@ -378,7 +377,7 @@ class GitCDN:
         return await self.proxify(request)
 
     async def routing_handler(self, request):
-        self.start_time = time.time()
+        request["start_time"] = time.time()
         response = None
         global parallel_request
         try:
@@ -390,7 +389,7 @@ class GitCDN:
             response = e
             raise
         finally:
-            self.stats(response)
+            self.stats(request, response)
             parallel_request -= 1
 
     async def proxify(self, request):
@@ -436,7 +435,7 @@ class GitCDN:
                     resp_status=response.status,
                     # only dump the first value in multidict
                     resp_headers=dict(response.headers),
-                    resp_time=time.time() - self.start_time,
+                    resp_time=time.time() - request["start_time"],
                 )
 
                 if response.status < 400:
@@ -581,7 +580,7 @@ class GitCDN:
                 return 0
         return 0
 
-    def stats(self, response: Union[Exception, web.Response] = None):
+    def stats(self, request, response: Union[Exception, web.Response] = None):
         response_stats = {}
         if isinstance(response, (web.Response, web.StreamResponse)):
             output_size = 0
@@ -599,7 +598,7 @@ class GitCDN:
         log.info(
             "Response stats",
             **response_stats,
-            resp_time=time.time() - self.start_time,
+            resp_time=time.time() - request["start_time"],
             sema_count=self.get_sema_count(),
         )
         return response
