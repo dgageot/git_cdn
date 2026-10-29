@@ -69,3 +69,11 @@ async def test_fetch_failure_keeps_mtime(repo_dir, mocker):
     await repo_dir.fetch()
     assert repo_dir.mtime() == 0
     assert repo_dir.run_git.call_count == 5
+
+
+@pytest.mark.asyncio
+async def test_run_git_spawn_failure(mocker):
+    mocker.patch("git_cdn.repo_cache.exec_git", side_effect=FileNotFoundError("git"))
+    rcache = RepoCache("/tmp", "fake", "fake")
+    with pytest.raises(FileNotFoundError):
+        await rcache.run_git("fake")

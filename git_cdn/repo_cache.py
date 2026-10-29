@@ -68,8 +68,8 @@ class RepoCache:
         log.debug("git_cmd start", cmd=args)
         stdout_data = b""
         stderr_data = b""
+        git_proc = await exec_git(*args)
         try:
-            git_proc = await exec_git(*args)
             stdout_data, stderr_data = await git_proc.communicate()
         except (
             asyncio.CancelledError,
