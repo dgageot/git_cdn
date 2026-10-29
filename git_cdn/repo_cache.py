@@ -35,6 +35,30 @@ async def exec_git(*args, env=None):
     )
 
 
+class KnownMissing:
+    """sha1s still missing right after a fetch, per repo. Upstream does not have
+    them (hidden ref, typo, abuse): don't fetch again for them for a while,
+    each fetch costs upstream a ref advertisement and locks the repo."""
+
+    def __init__(self, ttl):
+        self.ttl = ttl
+        self.expiry = {}
+
+    def add(self, repo, sha1s):
+        now = time.time()
+        if len(self.expiry) > 10000:
+            self.expiry = {k: v for k, v in self.expiry.items() if v > now}
+        for sha1 in sha1s:
+            self.expiry[(repo, sha1)] = now + self.ttl
+
+    def has_all(self, repo, sha1s):
+        now = time.time()
+        return all(self.expiry.get((repo, sha1), 0) > now for sha1 in sha1s)
+
+
+known_missing = KnownMissing(int(os.getenv("MISSING_WANT_TTL", "60")))
+
+
 class RepoCache:
     def __init__(self, path, auth, upstream):
         git_cache_dir = get_subdir("git")
@@ -194,33 +218,33 @@ class RepoCache:
                 await self.fetch()
 
     async def ensure_input_wants(self, wants):
-        """Checks if all 'wants'
-        and updates rcache if that is not the case
-        """
+        """Update the local copy if it misses any of the 'wants' sha1s"""
         newrelic.agent.add_custom_attribute("want_size", len(wants))
         if not self.exists():
             log.debug("rcache noexistent, cloning")
             await self.update()
-        else:
-            not_our_refs = True
-            async with self.read_lock():
-                not_our_refs = await self._missing_want(wants)
+            return
+        async with self.read_lock():
+            missing = await self._missing_wants(wants)
+        if not missing:
+            return
+        if known_missing.has_all(self.directory, missing):
+            log.info("wants recently missing after a fetch, not fetching again")
+            return
+        log.debug("not our refs, fetching")
+        await self.update()
+        async with self.read_lock():
+            known_missing.add(self.directory, await self._missing_wants(missing))
 
-            if not_our_refs:
-                log.debug("not our refs, fetching")
-                await self.update()
-
-    async def _missing_want(self, wants):
-        """Return True if at least one sha1 in 'wants' is missing in self.rcache"""
+    async def _missing_wants(self, wants):
+        """The sha1s of 'wants' absent from the local copy"""
         try:
             stdout = await self.cat_file(wants)
         except FileNotFoundError:
-            # Exception while doing git cat command
-            # Is rcache really valid ?
-            # By returning True, we will ask for an update
-            return True
-
-        return b"missing" in stdout
+            # Is rcache really valid? Asking for an update will tell
+            return set(wants)
+        lines = stdout.splitlines()
+        return {line.split()[0] for line in lines if line.endswith(b" missing")}
 
     async def execute_git_command(self, required_sha1s, *args):
         """Run a git command on the local copy, syncing it first if it misses
