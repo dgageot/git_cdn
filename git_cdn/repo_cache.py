@@ -226,14 +226,8 @@ class RepoCache:
         return b"missing" in stdout
 
     async def execute_git_command(self, required_sha1s, *args):
-        await self.ensure_input_wants(required_sha1s)
-        p = await asyncio.create_subprocess_exec(
-            "git",
-            "--git-dir",
-            self.directory,
-            *args,
-            stderr=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        cmd_stdout, _ = await p.communicate()
-        return cmd_stdout
+        """Run a git command on the local copy, syncing it first if it misses
+        any of required_sha1s. Returns stdout, stderr, returncode."""
+        if required_sha1s:
+            await self.ensure_input_wants(required_sha1s)
+        return await self.run_git("--git-dir", self.directory, *args)

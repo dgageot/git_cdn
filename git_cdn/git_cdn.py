@@ -16,6 +16,7 @@ from aiohttp import TCPConnector
 from aiohttp import web
 from aiohttp.web_exceptions import HTTPBadGateway
 from aiohttp.web_exceptions import HTTPBadRequest
+from aiohttp.web_exceptions import HTTPNotFound
 from aiohttp.web_exceptions import HTTPPermanentRedirect
 from aiohttp.web_exceptions import HTTPUnauthorized
 from structlog import getLogger
@@ -85,6 +86,10 @@ def check_auth(request):
         ):
             spl[i - 1] += ".git"
             raise HTTPPermanentRedirect("/".join(spl))
+    require_auth(request)
+
+
+def require_auth(request):
     if request.headers.get("Authorization") is None:
         raise HTTPUnauthorized(headers={"WWW-Authenticate": 'Basic realm="Git Proxy"'})
 
@@ -138,6 +143,50 @@ def hide_auth_on_headers(h):
         )
 
 
+# repo paths are segments of [word . -] chars that never start with a dot
+# (so no "." / ".." segments), joined by "/" and ending with ".git"
+API_REPO_RE = re.compile(r"(?:[\w\-][\w.\-]*/)*[\w\-][\w.\-]*\.git")
+SHA1_RE = re.compile(r"[0-9a-f]{40}")
+BRANCH_RE = re.compile(r"\S+")
+
+
+def query_param(request, name, pattern):
+    value = request.query.get(name, "")
+    if not pattern.fullmatch(value):
+        raise HTTPBadRequest(reason=f"bad {name}: {value}")
+    return value
+
+
+# Each API command maps a request to (sha1s that must be in the local copy, git args)
+def api_last_active_branches(_):
+    return [], [
+        "for-each-ref",
+        "--sort=-committerdate",
+        "--count=10",
+        "refs/remotes/origin/heads",
+    ]
+
+
+def api_merge_base(request):
+    base = query_param(request, "base", BRANCH_RE)
+    sha1 = query_param(request, "current_sha1", SHA1_RE)
+    return [sha1], ["merge-base", f"refs/remotes/origin/heads/{base}", sha1]
+
+
+def api_diff(request, *options):
+    base = query_param(request, "base_sha1", SHA1_RE)
+    current = query_param(request, "current_sha1", SHA1_RE)
+    return [base, current], ["diff", "--text", *options, f"{base}..{current}"]
+
+
+API_COMMANDS = {
+    "last_active_branches": api_last_active_branches,
+    "merge_base": api_merge_base,
+    "diff": api_diff,
+    "diff_no_renames": lambda request: api_diff(request, "--no-renames"),
+}
+
+
 class GitCDN:
     MAX_CONNECTIONS = int(
         max(10, int(os.getenv("MAX_CONNECTIONS", "10")) / GUNICORN_WORKER_NB)
@@ -170,12 +219,7 @@ class GitCDN:
         self.router = router
         self.upstream = self.app.upstream = upstream
         self.router.add_get("/", self.handle_liveness)
-        self.router.add_get(
-            "/__api__/last_active_branches", self.handle_api_last_active_branches
-        )
-        self.router.add_get("/__api__/merge_base", self.handle_api_merge_base)
-        self.router.add_get("/__api__/diff", self.handle_api_diff)
-        self.router.add_get("/__api__/diff_no_renames", self.handle_api_diff_no_renames)
+        self.router.add_get("/__api__/{command}", self.handle_api)
         self.auth_cache = AuthCache()
         self.router.add_resource("/{path:.+}").add_route("*", self.routing_handler)
         self.proxysession = None
@@ -425,92 +469,32 @@ class GitCDN:
         newrelic.agent.set_transaction_name("liveness_probe", group=None, priority=None)
         return web.Response(text="live")
 
-    async def handle_api_last_active_branches(self, request):
+    async def handle_api(self, request):
+        """Run a read-only git command on the local copy of a repo.
+        Every parameter is validated before use: they end up in git argv."""
+        name = request.match_info["command"]
+        command = API_COMMANDS.get(name)
+        if command is None:
+            raise HTTPNotFound()
+        repo = query_param(request, "repo", API_REPO_RE)
         newrelic.agent.set_transaction_name(
-            "api.last_active_branches " + request.query["repo"],
-            group=None,
-            priority=None,
+            f"api.{name} {repo}", group=None, priority=None
         )
-        auth_response = await self.auth_request(request, request.query["repo"])
+        required_sha1s, git_args = command(request)
+
+        require_auth(request)
+        auth_response = await self.auth_request(request, repo)
         if auth_response is not None:
             return web.Response(text=auth_response.reason, status=auth_response.status)
 
-        auth = request.headers["Authorization"]
-        creds = get_url_creds_from_auth(auth)
-        rcache = RepoCache(request.query["repo"], creds, self.upstream)
-        # argv only, never a shell: "repo" is user controlled
-        cmd_stdout, cmd_stderr, returncode = await rcache.run_git(
-            "--git-dir",
-            rcache.directory,
-            "for-each-ref",
-            "--sort=-committerdate",
-            "--count=10",
-            "refs/remotes/origin/heads",
+        creds = get_url_creds_from_auth(request.headers["Authorization"])
+        rcache = RepoCache(repo, creds, self.upstream)
+        stdout, stderr, returncode = await rcache.execute_git_command(
+            [sha1.encode() for sha1 in required_sha1s], *git_args
         )
         if returncode != 0:
-            return web.Response(text=cmd_stderr.decode(errors="replace"), status=500)
-        return web.Response(body=cmd_stdout)
-
-    async def handle_api_merge_base(self, request):
-        newrelic.agent.set_transaction_name(
-            "api.merge_base " + request.query["repo"], group=None, priority=None
-        )
-        auth_response = await self.auth_request(request, request.query["repo"])
-        if auth_response is not None:
-            return web.Response(text=auth_response.reason, status=auth_response.status)
-        auth = request.headers["Authorization"]
-        creds = get_url_creds_from_auth(auth)
-        rcache = RepoCache(request.query["repo"], creds, self.upstream)
-        cmd_stdout = await rcache.execute_git_command(
-            [request.query["current_sha1"].encode("ascii")],
-            "merge-base",
-            f"refs/remotes/origin/heads/{request.query['base']}",
-            request.query["current_sha1"],
-        )
-        return web.Response(body=cmd_stdout)
-
-    async def handle_api_diff(self, request):
-        newrelic.agent.set_transaction_name(
-            "api.diff " + request.query["repo"], group=None, priority=None
-        )
-        auth_response = await self.auth_request(request, request.query["repo"])
-        if auth_response is not None:
-            return web.Response(text=auth_response.reason, status=auth_response.status)
-        auth = request.headers["Authorization"]
-        creds = get_url_creds_from_auth(auth)
-        rcache = RepoCache(request.query["repo"], creds, self.upstream)
-        cmd_stdout = await rcache.execute_git_command(
-            [
-                request.query["base_sha1"].encode("ascii"),
-                request.query["current_sha1"].encode("ascii"),
-            ],
-            "diff",
-            "--text",
-            f"{request.query['base_sha1']}..{request.query['current_sha1']}",
-        )
-        return web.Response(body=cmd_stdout)
-
-    async def handle_api_diff_no_renames(self, request):
-        newrelic.agent.set_transaction_name(
-            "api.diff_no_renames " + request.query["repo"], group=None, priority=None
-        )
-        auth_response = await self.auth_request(request, request.query["repo"])
-        if auth_response is not None:
-            return web.Response(text=auth_response.reason, status=auth_response.status)
-        auth = request.headers["Authorization"]
-        creds = get_url_creds_from_auth(auth)
-        rcache = RepoCache(request.query["repo"], creds, self.upstream)
-        cmd_stdout = await rcache.execute_git_command(
-            [
-                request.query["base_sha1"].encode("ascii"),
-                request.query["current_sha1"].encode("ascii"),
-            ],
-            "diff",
-            "--text",
-            "--no-renames",
-            f"{request.query['base_sha1']}..{request.query['current_sha1']}",
-        )
-        return web.Response(body=cmd_stdout)
+            return web.Response(text=stderr.decode(errors="replace"), status=500)
+        return web.Response(body=stdout)
 
     async def auth_request(self, request, path):
         auth = request.headers["Authorization"]
