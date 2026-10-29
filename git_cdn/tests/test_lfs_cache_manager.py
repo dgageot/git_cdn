@@ -2,6 +2,7 @@
 import gzip
 import hashlib
 import json
+import os
 from copy import deepcopy
 
 # Third Party Libraries
@@ -245,3 +246,49 @@ async def test_download_error(
     cache_manager.session = client
     with pytest.raises(HTTPNotFound):
         await cache_manager.get_from_cache(path, {})
+
+
+@pytest.mark.asyncio
+async def test_interrupted_download_leaves_nothing(
+    cache_manager, tmpworkdir, cdn_event_loop, aiohttp_client
+):
+    async def truncated(request):
+        resp = web.StreamResponse(headers={"Content-Length": "1000"})
+        await resp.prepare(request)
+        await resp.write(b"partial")
+        request.transport.close()
+        return resp
+
+    app = web.Application()
+    checksum = hashlib.sha256(b"whatever").hexdigest()
+    path = f"/{checksum}"
+    app.add_routes([web.get(path, truncated)])
+    cache_manager.session = await aiohttp_client(app)
+    cache_file = LFSCacheFile(path, headers={})
+
+    with pytest.raises(HTTPNotFound):
+        await cache_manager.get_from_cache(path, {})
+    assert sorted(os.listdir(os.path.dirname(cache_file.filename))) == [
+        os.path.basename(cache_file.lock_file)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_corrupt_gzip_leaves_nothing(
+    cache_manager, tmpworkdir, cdn_event_loop, aiohttp_client
+):
+    async def not_gzip(request):
+        return web.Response(body=b"not gzip", headers={"Content-Encoding": "gzip"})
+
+    app = web.Application()
+    checksum = hashlib.sha256(b"whatever").hexdigest()
+    path = f"/{checksum}"
+    app.add_routes([web.get(path, not_gzip)])
+    cache_manager.session = await aiohttp_client(app, auto_decompress=False)
+    cache_file = LFSCacheFile(path, headers={"Accept-Encoding": "gzip"})
+
+    with pytest.raises(HTTPNotFound):
+        await cache_manager.get_from_cache(path, {"Accept-Encoding": "gzip"})
+    assert sorted(os.listdir(os.path.dirname(cache_file.filename))) == [
+        os.path.basename(cache_file.lock_file)
+    ]

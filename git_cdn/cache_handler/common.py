@@ -143,7 +143,7 @@ def find_git_repo(s):
 class LfsFile(BasePrune):
     @property
     def lockfile(self):
-        return self.path
+        return f"{self.path}.lock"
 
     @property
     def mtime(self):

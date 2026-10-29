@@ -36,11 +36,16 @@ class LFSCacheFile:
     def gzip(self):
         return f"{self.filename}.gzip"
 
+    @property
+    def lock_file(self):
+        # never the cache file itself: it is replaced atomically once complete
+        return f"{self.filename}.lock"
+
     def read_lock(self):
-        return lock(self.filename, mode=fcntl.LOCK_SH)
+        return lock(self.lock_file, mode=fcntl.LOCK_SH)
 
     def write_lock(self):
-        return lock(self.filename, mode=fcntl.LOCK_EX)
+        return lock(self.lock_file, mode=fcntl.LOCK_EX)
 
     def delete(self):
         if os.path.exists(self.gzip):
@@ -65,32 +70,37 @@ class LFSCacheFile:
     def gzip_utime(self):
         os.utime(self.gzip, None)
 
+    @property
+    def part(self):
+        """Files are only renamed to their final name once complete, so a
+        killed worker never leaves a truncated object in the cache."""
+        return f"{self.filename}.part"
+
     async def gunzip(self):
         # We do not want to compute the gunzip using python stlib
         # - file may be huge, native gunzip will have better perf
         # - avoid python memory allocations and GC operations
-        p = await asyncio.create_subprocess_exec(
-            "gunzip",
-            "-f",
-            "-k",
-            "-S",
-            ".gzip",
-            self.gzip,
-            stderr=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-        )
-        cmd_stdout, cmd_stderr = await p.communicate()
-        r = p.returncode
-        if r:
+        with open(self.part, "wb") as out:
+            p = await asyncio.create_subprocess_exec(
+                "gunzip",
+                "-c",
+                self.gzip,
+                stdout=out,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, cmd_stderr = await p.communicate()
+        if p.returncode:
             log.error(
                 "gunzip failed",
                 lfs_filename=self.filename,
                 cmd_stderr=cmd_stderr.decode(),
-                cmd_stdout=cmd_stdout.decode(),
                 lfs_gzip=self.gzip,
                 pid=p.pid,
             )
-        return r
+            os.unlink(self.part)
+            return p.returncode
+        os.replace(self.part, self.filename)
+        return 0
 
     async def checksum(self):
         # We do not want to compute the sha using python stlib
@@ -103,7 +113,7 @@ class LFSCacheFile:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
         )
-        (stdout_data, _) = await p.communicate()
+        stdout_data, _ = await p.communicate()
         cs = stdout_data.decode().split(" ")[0]
         if cs != self.hash:
             log.error(
@@ -148,33 +158,31 @@ class LFSCacheFile:
             if request.status != 200:
                 raise HTTPNotFound(body=await request.content.read())
 
-            ext = ""
-            if (
-                "Content-Encoding" in request.headers
-                and "gzip" in request.headers["Content-Encoding"]
-            ):
+            gzipped = "gzip" in request.headers.get("Content-Encoding", "")
+            if gzipped:
                 ctx["lfs_content_encoding"] = "gzip"
-                ext = ".gzip"
 
-            with open(self.filename + ext, "wb") as f:
+            with open(self.part, "wb") as f:
                 try:
                     while chunk := await request.content.readany():
                         f.write(chunk)
-
                 except Exception:
                     # don't need to raise, if the file is not present, we will try again
                     log.exception("Aborting lfs download", **ctx)
-                    self.delete()
+                    os.unlink(self.part)
                     return
 
-            t2 = time.time()
-            ctx["lfs_download_duration"] = t2 - t1
-            if ext == ".gzip":
-                await self.gunzip()
-                ctx["lfs_uncompress_duration"] = time.time() - t2
+        t2 = time.time()
+        ctx["lfs_download_duration"] = t2 - t1
+        if gzipped:
+            os.replace(self.part, self.gzip)
+            await self.gunzip()
+            ctx["lfs_uncompress_duration"] = time.time() - t2
+        else:
+            os.replace(self.part, self.filename)
 
-            if not await self.checksum():
-                self.delete()
+        if not await self.checksum():
+            self.delete()
 
 
 class LFSCacheManager:
