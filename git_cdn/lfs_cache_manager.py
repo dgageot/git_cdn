@@ -196,7 +196,6 @@ class LFSCacheManager:
         self.upstream_url = upstream_url
         self.base_url = base_url
         self.session = session
-        self.ctx = {}
 
     def set_base_url(self, base_url):
         self.base_url = base_url
@@ -227,7 +226,7 @@ class LFSCacheManager:
             href = href.replace(self.base_url, self.upstream_url)
 
         cache_file = LFSCacheFile(href, headers)
-        self.ctx = {"lfs_href": href, "lfs_content_encoding": "none"}
+        ctx = {"lfs_href": href, "lfs_content_encoding": "none"}
 
         async with cache_file.read_lock():
             r = cache_file.response()
@@ -238,8 +237,8 @@ class LFSCacheManager:
             r = cache_file.response()
             if r is not None:
                 return r
-            await asyncio.shield(cache_file.download(self.session, self.ctx))
-            bind_contextvars(lfs_hit=False, **self.ctx)
+            await asyncio.shield(cache_file.download(self.session, ctx))
+            bind_contextvars(lfs_hit=False, **ctx)
 
             if not cache_file.exists():
                 raise HTTPNotFound(body="failed to get LFS file")
